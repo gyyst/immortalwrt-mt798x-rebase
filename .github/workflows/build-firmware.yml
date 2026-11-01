@@ -11,6 +11,7 @@ on:
         options:
           - all
           - mt7981-ax3000
+          - mt7981-ax3000-dev
           - mt7986-ax4200
           - mt7986-ax6000
           - mt7986-ax6000-256m

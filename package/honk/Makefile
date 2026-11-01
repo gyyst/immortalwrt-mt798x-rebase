@@ -16,7 +16,7 @@ HONK_ASSET:=honk-core-$(HONK_RELEASE)-aarch64-unknown-linux-musl-stock-native-ap
 
 PKG_SOURCE:=$(HONK_ASSET)
 PKG_SOURCE_URL:=https://github.com/daeuniverse/honk/releases/download/$(HONK_RELEASE)/
-PKG_HASH:=216ace91ba157f909fca2ecf1f3b33015251b9481382609542fc6907dd521602
+PKG_HASH:=6dee922a25f1381e8811a4cd2c173a14bdf2448023fed1b4707d7e83ea3dd06b
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 PKG_LICENSE:=GPL-3.0-only

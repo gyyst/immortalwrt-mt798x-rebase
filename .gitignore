@@ -35,3 +35,10 @@ git-src
 .cproject
 .ccache
 .vscode*
+.serena
+.idea
+.claude
+.trellis
+AGENTS.md
+CLAUDE.md
+tmp/

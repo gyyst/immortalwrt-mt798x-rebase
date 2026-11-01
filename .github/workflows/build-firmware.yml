@@ -12,6 +12,7 @@ on:
           - all
           - mt7981-ax3000
           - mt7981-ax3000-dev
+          - mt7981-ax3000-cudy-tr3000-ubootmod
           - mt7986-ax4200
           - mt7986-ax6000
           - mt7986-ax6000-256m
@@ -204,6 +205,7 @@ jobs:
           mkdir -p dist
           find "${target_dir}" -maxdepth 1 -type f \
             \( -name '*.bin' -o -name '*.itb' -o -name '*.img' -o -name '*.img.gz' \
+               -o -name '*.fip' \
                -o -name '*.manifest' -o -name 'sha256sums' -o -name 'profiles.json' \
                -o -name '*buildinfo*' \) \
             -exec cp -v -t dist/ {} +

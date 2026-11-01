@@ -13,6 +13,7 @@ on:
           - mt7981-ax3000
           - mt7981-ax3000-dev
           - mt7981-ax3000-cudy-tr3000-ubootmod
+          - mt7981-ax3000-cudy-tr3000-mtkuboot-114m
           - mt7986-ax4200
           - mt7986-ax6000
           - mt7986-ax6000-256m

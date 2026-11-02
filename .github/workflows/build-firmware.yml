@@ -169,6 +169,7 @@ jobs:
             echo >> .config
           fi
           echo 'CONFIG_CCACHE=y' >> .config
+          echo 'CONFIG_BUILD_LOG=y' >> .config
           make defconfig
 
       - name: Download sources
@@ -233,6 +234,7 @@ jobs:
           path: |
             logs/
             .config
+          include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore
 

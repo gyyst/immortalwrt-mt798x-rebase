@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=honk
-PKG_VERSION:=0.1.0_beta.4
+PKG_VERSION:=0.1.0_beta4
 PKG_RELEASE:=1
 
 HONK_RELEASE:=v0.1.0-beta.4

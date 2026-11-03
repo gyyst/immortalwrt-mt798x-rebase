@@ -8,15 +8,15 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=honk
-PKG_VERSION:=0.1.0_beta4
+PKG_VERSION:=0.1.0_beta5
 PKG_RELEASE:=1
 
-HONK_RELEASE:=v0.1.0-beta.4
+HONK_RELEASE:=v0.1.0-beta.5
 HONK_ASSET:=honk-core-$(HONK_RELEASE)-aarch64-unknown-linux-musl-stock-native-api.tar.gz
 
 PKG_SOURCE:=$(HONK_ASSET)
 PKG_SOURCE_URL:=https://github.com/daeuniverse/honk/releases/download/$(HONK_RELEASE)/
-PKG_HASH:=6dee922a25f1381e8811a4cd2c173a14bdf2448023fed1b4707d7e83ea3dd06b
+PKG_HASH:=540681a551ded9c502badca20854b29ba6b7c0bd1937ba446b8549c79b7ef59e
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 PKG_LICENSE:=GPL-3.0-only

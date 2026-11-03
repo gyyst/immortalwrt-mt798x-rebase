@@ -1,0 +1,62 @@
+name: Update honk
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'honk release tag (leave empty for latest)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Update honk package
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: 25.12
+          fetch-depth: 0
+
+      - name: Update package/honk/Makefile
+        id: update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sh scripts/update-honk.sh "${{ inputs.tag }}"
+          tag="$(sed -n 's/^HONK_RELEASE:=//p' package/honk/Makefile)"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.update.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- package/honk/Makefile; then
+            echo "honk is already up to date (${TAG})"
+            exit 0
+          fi
+
+          branch="honk/update-${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${branch}"
+          git add package/honk/Makefile
+          git commit -m "honk: update to ${TAG}"
+          git push -f origin "${branch}"
+
+          if [ "$(gh pr list --head "${branch}" --state open --json number --jq 'length')" -gt 0 ]; then
+            echo "open PR already exists for ${branch}"
+          else
+            gh pr create --base 25.12 --head "${branch}" \
+              --title "honk: update to ${TAG}" \
+              --body "Upstream: https://github.com/daeuniverse/honk/releases/tag/${TAG}"
+          fi

@@ -27,6 +27,15 @@ if [ -z "$TARGET_DIR" ] || [ -z "$DOWNLOAD_URL" ]; then
     exit 1
 fi
 
+case "$DOWNLOAD_URL" in
+    https://*) ;;
+    *)
+        log "Error: only https:// URLs are allowed"
+        set_status "FAILED"
+        exit 1
+        ;;
+esac
+
 set_status "DOWNLOADING"
 log "Deploying dashboard to: $TARGET_DIR"
 log "Download URL: $DOWNLOAD_URL"
@@ -34,11 +43,11 @@ log "Download URL: $DOWNLOAD_URL"
 download_file() {
     local url="$1" output="$2"
     if command -v curl >/dev/null 2>&1; then
-        curl -s -S -k -L -f --connect-timeout 15 --max-time 180 -o "$output" "$url" >> "$LOG_FILE" 2>&1
+        curl -s -S -L -f --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 -o "$output" "$url" >> "$LOG_FILE" 2>&1
     elif command -v wget >/dev/null 2>&1; then
-        wget --no-check-certificate -T 15 -t 3 -O "$output" "$url" >> "$LOG_FILE" 2>&1
+        wget -T 15 -t 3 -O "$output" "$url" >> "$LOG_FILE" 2>&1
     elif command -v uclient-fetch >/dev/null 2>&1; then
-        uclient-fetch --no-check-certificate --timeout 15 -O "$output" "$url" >> "$LOG_FILE" 2>&1
+        uclient-fetch -q --timeout 15 -O "$output" "$url" >> "$LOG_FILE" 2>&1
     else
         log "Error: No download tool found (curl, wget, or uclient-fetch)!"
         return 1
@@ -48,11 +57,11 @@ download_file() {
 fetch_text() {
     local url="$1"
     if command -v curl >/dev/null 2>&1; then
-        curl -s -k -L -f --connect-timeout 8 --max-time 15 "$url" 2>/dev/null
+        curl -s -L -f --proto '=https' --tlsv1.2 --connect-timeout 8 --max-time 15 "$url" 2>/dev/null
     elif command -v wget >/dev/null 2>&1; then
-        wget --no-check-certificate -q -T 8 -t 1 -O - "$url" 2>/dev/null
+        wget -q -T 8 -t 1 -O - "$url" 2>/dev/null
     elif command -v uclient-fetch >/dev/null 2>&1; then
-        uclient-fetch --no-check-certificate -q --timeout 8 -O - "$url" 2>/dev/null
+        uclient-fetch -q --timeout 8 -O - "$url" 2>/dev/null
     fi
 }
 

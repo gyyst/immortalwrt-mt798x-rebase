@@ -176,7 +176,7 @@ return view.extend({
 
 		// Missing UI view
 		var metaUiDir = E('td', {}, profile.defaultDir);
-		var metaController = E('td', {}, dash.defaults.host + ':' + dash.defaults.port);
+		var metaController = E('td', {}, (dash.defaults.host || _('LAN IP')) + ':' + dash.defaults.port);
 		var metaSecret = E('td', {}, _('(Not set)'));
 
 		var radioGithub = E('input', { 'type': 'radio', 'class': 'cbi-input-radio', 'name': 'dash_dl_src', 'value': profile.githubRelease, 'checked': 'checked' });
@@ -523,7 +523,7 @@ return view.extend({
 
 				if (!data.has_ui) {
 					metaUiDir.innerText = data.external_ui || profile.defaultDir;
-					metaController.innerText = data.external_controller || (dash.defaults.host + ':' + profile.defaultPort);
+					metaController.innerText = data.external_controller || ((dash.defaults.host || _('LAN IP')) + ':' + profile.defaultPort);
 					metaSecret.innerText = data.secret ? data.secret : _('Not configured (Empty)');
 					showState('missing_ui');
 					return;

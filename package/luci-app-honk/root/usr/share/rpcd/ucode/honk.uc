@@ -5,9 +5,71 @@
 import { readfile, writefile, popen, stat } from 'fs';
 import { cursor } from 'uci';
 
-const DEFAULT_HOST = "0.0.0.0";
 const DEFAULT_PORT = "9527";
-const DEFAULT_SECRET = "honk114514";
+const MIN_SECRET_LEN = 16;
+
+function secret_is_strong(sec) {
+	return sec && length(sec) >= MIN_SECRET_LEN && !match(sec, /[^A-Za-z0-9._~-]/);
+}
+
+function generate_secret() {
+	let p = popen("cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-'");
+	let s = p ? (p.read("all") || "") : "";
+	if (p) p.close();
+	s = trim(s);
+	if (length(s) == 32 && match(s, /^[0-9a-f]+$/))
+		return s;
+
+	p = popen("head -c 32 /dev/urandom 2>/dev/null | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32");
+	s = p ? (p.read("all") || "") : "";
+	if (p) p.close();
+	s = trim(s);
+	if (length(s) >= 24 && match(s, /^[A-Za-z0-9]+$/))
+		return s;
+
+	return null;
+}
+
+function get_lan_ip() {
+	let ip = "";
+	let p = popen("ubus call network.interface.lan status 2>/dev/null");
+	let status = p ? (p.read("all") || "") : "";
+	if (p) p.close();
+	let m = match(status, /"address"\s*:\s*"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)"/);
+	if (m)
+		ip = m[1];
+
+	if (!match(ip, /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/)) {
+		let u = cursor();
+		if (u) {
+			u.load("network");
+			ip = u.get("network", "lan", "ipaddr") || "";
+		}
+	}
+
+	return match(ip, /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) ? ip : "127.0.0.1";
+}
+
+function is_local_host(host) {
+	if (!host || host == "0.0.0.0" || host == "::")
+		return false;
+
+	let p = popen("ip -o addr show 2>/dev/null");
+	let s = p ? (p.read("all") || "") : "";
+	if (p) p.close();
+	return index(s, " " + host + "/") >= 0;
+}
+
+function write_secure(path, content) {
+	let tmp = path + ".tmp";
+	if (!writefile(tmp, content))
+		return false;
+	if (system("chmod 600 '" + tmp + "' && mv -f '" + tmp + "' '" + path + "'") != 0) {
+		system("rm -f '" + tmp + "'");
+		return false;
+	}
+	return true;
+}
 
 const DASHBOARD_DIRS = {
 	zashboard: "/etc/honk/zashboard",
@@ -382,8 +444,8 @@ function download_dashboard(req) {
 	requested_type = normalize_dashboard_type(requested_type);
 
 	let url = (req && req.args && req.args.url) ? req.args.url : "";
-	if (!match(url, /^https?:\/\//) || match(url, /[ \t\r\n'"`]/)) {
-		return { success: false, message: "Invalid URL" };
+	if (!match(url, /^https:\/\//) || match(url, /[ \t\r\n'"`]/)) {
+		return { success: false, message: "Invalid URL (https:// required)" };
 	}
 
 	let api_cfg = get_api_config();
@@ -446,12 +508,12 @@ function switch_dashboard_api(target_type) {
 
 	if (target_type == "none" || !target_type) {
 		let cur = readfile(api_file);
+		if (!write_secure(api_file, ""))
+			return { success: false, message: "failed to write API configuration" };
 		if (cur && trim(cur) != "") {
-			writefile(api_file, "");
 			system("/etc/init.d/honk restart >/dev/null 2>&1 &");
 			return { success: true, type: "none", queued: true };
 		}
-		writefile(api_file, "");
 		return { success: true, type: "none" };
 	}
 
@@ -470,25 +532,38 @@ function switch_dashboard_api(target_type) {
 	if (!api_cfg.is_legacy && parsed_native && parsed_native.enabled &&
 	    parsed_native.listen &&
 	    parsed_native.config_write &&
+	    secret_is_strong(parsed_native.secret) &&
+	    is_local_host(parsed_native.host) &&
 	    parsed_native.ui == target_ui &&
 	    has_target_ui) {
 		return { success: true, type: target_type };
 	}
 
 	let api_content = readfile(api_file) || "";
-	let sec = (parsed_native && parsed_native.secret && length(parsed_native.secret) >= 8) ? parsed_native.secret : DEFAULT_SECRET;
-	let listen = (parsed_native && parsed_native.listen) ? parsed_native.listen : (DEFAULT_HOST + ":" + DEFAULT_PORT);
+	let sec = (parsed_native && secret_is_strong(parsed_native.secret)) ? parsed_native.secret : null;
+	let listen = (parsed_native && parsed_native.listen) ? parsed_native.listen : "";
 
 	if (!parsed_native) {
 		let clean = strip_dae_comments(api_content);
 		let sec_m = match(clean, /secret\s*:\s*['"]?([^'" \t\r\n]*)['"]?/);
 		let listen_m = match(clean, /listen\s*:\s*['"]?([^'" \t\r\n]+)['"]?/);
-		if (sec_m && length(sec_m[1]) >= 8) {
+		if (sec_m && secret_is_strong(sec_m[1])) {
 			sec = sec_m[1];
 		}
 		if (listen_m) {
 			listen = listen_m[1];
 		}
+	}
+
+	if (!sec) {
+		sec = generate_secret();
+		if (!sec)
+			return { success: false, message: "failed to generate a secure API secret" };
+	}
+
+	let hp = parse_host_port(listen);
+	if (!listen || !hp.host || hp.host == "0.0.0.0" || hp.host == "::" || !is_local_host(hp.host)) {
+		listen = get_lan_ip() + ":" + (hp.port || DEFAULT_PORT);
 	}
 
 	let cleaned_api = api_content;
@@ -521,7 +596,9 @@ ui_line +
 		new_api_content = base + "\n\n" + default_block;
 	}
 
-	writefile(api_file, new_api_content);
+	if (!write_secure(api_file, new_api_content))
+		return { success: false, message: "failed to write API configuration" };
+
 	system("/etc/init.d/honk restart >/dev/null 2>&1 &");
 
 	return { success: true, type: target_type, queued: true };

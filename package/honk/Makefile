@@ -35,7 +35,7 @@ define Package/honk
 	+ca-bundle +ip-full \
 	+kmod-sched-core +kmod-sched-bpf +kmod-veth +kmod-nft-queue \
 	+v2ray-geoip +v2ray-geosite \
-	+@KERNEL_XDP_SOCKETS +@KERNEL_DEBUG_INFO_BTF
+	+@KERNEL_XDP_SOCKETS +@KERNEL_DEBUG_INFO_BTF +@KERNEL_CGROUP_BPF
 endef
 
 define Package/honk/description

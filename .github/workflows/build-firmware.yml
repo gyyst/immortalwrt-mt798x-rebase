@@ -40,11 +40,24 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       cache_saver: ${{ steps.matrix.outputs.cache_saver }}
+      cache_savers: ${{ steps.matrix.outputs.cache_savers }}
+      toolchain_hash: ${{ steps.toolchain.outputs.hash }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Compute toolchain fingerprint
+        id: toolchain
+        run: |
+          set -euo pipefail
+          host_cc="$(gcc -dumpversion 2>/dev/null || echo unknown)"
+          files_hash="$(find toolchain tools include scripts/config rules.mk Config.in -type f -print0 \
+            | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+          fingerprint="$(printf '%s' "hostgcc-${host_cc}-${files_hash}" | sha256sum | cut -d' ' -f1)"
+          echo "hash=${fingerprint}" >> "${GITHUB_OUTPUT}"
+          echo "Toolchain fingerprint: ${fingerprint} (host gcc ${host_cc})"
 
       - name: Compute defconfig matrix
         id: matrix
@@ -78,11 +91,29 @@ jobs:
             build=("${REQUESTED}")
           fi
 
-          matrix_json="$(jq -cn --args '$ARGS.positional' "${build[@]}")"
+          # Pick one ccache saver per chip family (the one with the fewest
+          # devices, i.e. the fastest job) so a run adds at most one cache
+          # entry per family instead of one per defconfig.
+          declare -A saver_devices=()
+          declare -A saver_name=()
+          for name in "${build[@]}"; do
+            family="${name%%-*}"
+            devices="$(grep -c '^CONFIG_TARGET_DEVICE_.*=y' "defconfig/${name}.config" || true)"
+            if [ -z "${saver_name[${family}]:-}" ] || [ "${devices}" -lt "${saver_devices[${family}]}" ]; then
+              saver_name[${family}]="${name}"
+              saver_devices[${family}]="${devices}"
+            fi
+          done
+          mapfile -t savers < <(for family in "${!saver_name[@]}"; do echo "${saver_name[${family}]}"; done | sort)
+          savers_json="$(jq -cn --args '$ARGS.positional' "${savers[@]}")"
+          echo "cache_savers=${savers_json}" >> "${GITHUB_OUTPUT}"
+          echo "ccache savers: ${savers_json}"
+
+          matrix_json="$(jq -cn --args '$ARGS.positional | map({defconfig: ., family: (split("-")[0])})' "${build[@]}")"
           echo "matrix=${matrix_json}" >> "${GITHUB_OUTPUT}"
-          echo "cache_saver=${build[0]}" >> "${GITHUB_OUTPUT}"
+          echo "cache_saver=${savers[0]}" >> "${GITHUB_OUTPUT}"
           echo "Build matrix: ${matrix_json}"
-          echo "dl cache saver: ${build[0]}"
+          echo "dl cache saver: ${savers[0]}"
 
   build:
     name: Build ${{ matrix.defconfig }}
@@ -92,9 +123,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        defconfig: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
-      CCACHE_MAXSIZE: '3G'
+      CCACHE_MAXSIZE: '1500M'
+      # ccache defaults to an mtime-based compiler check; every CI run builds a
+      # fresh cross toolchain, so that check would invalidate the whole cache.
+      # Pin it to a fingerprint of the toolchain sources instead.
+      CCACHE_COMPILERCHECK: string:openwrt-${{ needs.prepare.outputs.toolchain_hash }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -127,12 +162,16 @@ jobs:
             subversion intltool xmlto liblzma-dev liblzo2-dev bzip2 gperf help2man \
             p7zip-full texinfo device-tree-compiler curl zip
 
+      - name: Compute download cache week
+        id: dlweek
+        run: echo "week=$(date -u +%G-W%V)" >> "${GITHUB_OUTPUT}"
+
       - name: Restore download cache
         continue-on-error: true
         uses: actions/cache/restore@v4
         with:
           path: dl
-          key: dl-${{ hashFiles('feeds.conf.default') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dl-${{ hashFiles('feeds.conf.default') }}-${{ steps.dlweek.outputs.week }}
           restore-keys: |
             dl-${{ hashFiles('feeds.conf.default') }}-
             dl-
@@ -142,16 +181,46 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .ccache
-          key: ccache-${{ matrix.defconfig }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ccache-${{ matrix.family }}-${{ matrix.defconfig }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ccache-${{ matrix.defconfig }}-
+            ccache-${{ matrix.family }}-
             ccache-
+
+      - name: Restore toolchain cache
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/toolchain-*
+            build_dir/host
+            build_dir/toolchain-*
+          key: toolchain-${{ needs.prepare.outputs.toolchain_hash }}-v1
+          restore-keys: |
+            toolchain-
+
+      - name: Restore feeds cache
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: feeds
+          key: feeds-${{ hashFiles('feeds.conf.default') }}-v1
+          restore-keys: |
+            feeds-
 
       - name: Update and install feeds
         run: |
           set -euo pipefail
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+
+      - name: Save feeds cache
+        if: matrix.defconfig == needs.prepare.outputs.cache_saver
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: feeds
+          key: feeds-${{ hashFiles('feeds.conf.default') }}-v1
 
       - name: Configure build
         env:
@@ -186,7 +255,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: dl
-          key: dl-${{ hashFiles('feeds.conf.default') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: dl-${{ hashFiles('feeds.conf.default') }}-${{ steps.dlweek.outputs.week }}
 
       - name: Compile firmware
         run: |
@@ -238,13 +307,25 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      - name: Save toolchain cache
+        if: always() && matrix.defconfig == needs.prepare.outputs.cache_saver
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/toolchain-*
+            build_dir/host
+            build_dir/toolchain-*
+          key: toolchain-${{ needs.prepare.outputs.toolchain_hash }}-v1
+
       - name: Save ccache
-        if: always()
+        if: always() && contains(fromJSON(needs.prepare.outputs.cache_savers), matrix.defconfig)
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: .ccache
-          key: ccache-${{ matrix.defconfig }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ccache-${{ matrix.family }}-${{ matrix.defconfig }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   release:
     name: Publish release

@@ -58,5 +58,8 @@ jobs:
           else
             gh pr create --base 25.12 --head "${branch}" \
               --title "honk: update to ${TAG}" \
-              --body "Upstream: https://github.com/daeuniverse/honk/releases/tag/${TAG}"
+              --body "Upstream: https://github.com/daeuniverse/honk/releases/tag/${TAG}" || {
+              echo "::warning::Could not create PR automatically."
+              echo "Open it manually: https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}"
+            }
           fi

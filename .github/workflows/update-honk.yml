@@ -8,10 +8,25 @@ on:
         required: false
         default: ''
         type: string
+      auto_merge:
+        description: 'Automatically merge the generated pull request'
+        required: true
+        default: false
+        type: boolean
+      build_defconfig:
+        description: 'Firmware defconfig to build after merge'
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - mt7981-ax3000-cudy-tr3000-mtkuboot-114m
+          - mt7981-ax3000-cudy-tr3000-ubootmod
 
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   update:
@@ -35,6 +50,7 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Open pull request
+        id: pr
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.update.outputs.tag }}
@@ -53,13 +69,38 @@ jobs:
           git commit -m "honk: update to ${TAG}"
           git push -f origin "${branch}"
 
-          if [ "$(gh pr list --head "${branch}" --state open --json number --jq 'length')" -gt 0 ]; then
-            echo "open PR already exists for ${branch}"
-          else
-            gh pr create --base 25.12 --head "${branch}" \
+          pr_number="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "${pr_number}" ]; then
+            if ! pr_url="$(gh pr create --base 25.12 --head "${branch}" \
               --title "honk: update to ${TAG}" \
-              --body "Upstream: https://github.com/daeuniverse/honk/releases/tag/${TAG}" || {
-              echo "::warning::Could not create PR automatically."
+              --body "Upstream: https://github.com/daeuniverse/honk/releases/tag/${TAG}")"; then
+              echo "::warning::Could not create PR automatically. Enable 'Allow GitHub Actions to create and approve pull requests' in repository settings."
               echo "Open it manually: https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}"
-            }
+              exit 0
+            fi
+            pr_number="$(gh pr view "${pr_url}" --json number --jq .number)"
           fi
+          echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
+
+      - name: Merge pull request
+        id: merge
+        if: inputs.auto_merge && steps.pr.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if gh pr merge "${PR_NUMBER}" --merge --delete-branch; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Could not merge PR #${PR_NUMBER}. Check branch protection rules."
+          fi
+
+      - name: Trigger firmware build
+        if: steps.merge.outputs.merged == 'true' && inputs.build_defconfig != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFCONFIG: ${{ inputs.build_defconfig }}
+        run: |
+          set -euo pipefail
+          gh workflow run build-firmware.yml --ref 25.12 -f defconfig="${DEFCONFIG}"

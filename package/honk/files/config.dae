@@ -52,7 +52,7 @@ routing {
 
 assets {
     geodata {
-        geosite: 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/release/geosite.dat'
-        geoip: 'https://raw.githubusercontent.com/QiuSimons/geoip-moedove/refs/heads/main/geoip.dat'
+        geosite: 'https://tvv.tw/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/release/geosite.dat'
+        geoip: 'https://tvv.tw/https://raw.githubusercontent.com/QiuSimons/geoip-moedove/refs/heads/main/geoip.dat'
     }
 }

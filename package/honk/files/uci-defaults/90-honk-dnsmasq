@@ -1,0 +1,40 @@
+#!/bin/sh
+# Use honk DNS as the primary dnsmasq upstream and the WAN gateway as a
+# fallback, so a stopped honk does not break LAN name resolution.
+#
+# Installed as a uci-defaults script: it runs on first install or upgrade and
+# leaves an already-configured dnsmasq untouched.
+# See package/honk/files/config.d/dns.dae for the matching honk side.
+
+[ -x /usr/bin/honk-core ] || exit 0
+[ -f /etc/config/dhcp ] || exit 0
+
+# Idempotency: do not overwrite an existing honk-first configuration.
+if [ "$(uci -q get dhcp.@dnsmasq[0].noresolv)" = "1" ] && \
+   uci -q get dhcp.@dnsmasq[0].server 2>/dev/null | grep -q '127\.0\.0\.1#7874'; then
+	exit 0
+fi
+
+# Prefer the live WAN gateway; fall back to the gateway used by this build.
+wan_gw=""
+if [ -f /lib/functions/network.sh ]; then
+	. /lib/functions/network.sh
+	if command -v network_get_gateway >/dev/null 2>&1; then
+		network_flush_cache 2>/dev/null
+		network_get_gateway wan_gw wan 2>/dev/null
+	fi
+fi
+case "$wan_gw" in
+	''|*[!0-9.]*) wan_gw='192.168.100.1' ;;
+esac
+
+uci -q set dhcp.@dnsmasq[0].noresolv='1'
+uci -q set dhcp.@dnsmasq[0].strictorder='1'
+uci -q delete dhcp.@dnsmasq[0].server
+uci -q add_list dhcp.@dnsmasq[0].server='127.0.0.1#7874'
+uci -q add_list dhcp.@dnsmasq[0].server="$wan_gw"
+uci -q commit dhcp
+
+[ -x /etc/init.d/dnsmasq ] && /etc/init.d/dnsmasq restart >/dev/null 2>&1
+
+exit 0

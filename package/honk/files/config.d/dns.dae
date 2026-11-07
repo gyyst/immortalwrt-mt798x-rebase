@@ -1,24 +1,28 @@
 # dns.dae
 dns {
-    #bind: 'tcp+udp://[::]:53530'
-    client_subnet: auto
+    bind: 'tcp+udp://0.0.0.0:7874'
     max_cache_size: 50000
     #ipversion_prefer: 4
+    # client_subnet is intentionally unset: dnsmasq does not return usable
+    # ECS data and honk rejects such responses with "invalid ECS response".
     upstream {
-        local: 'udp://127.0.0.1:53' -> direct
-        remote: 'tcp+udp://dns.google:53'
+        # WAN gateway: the only reachable port-53 upstream on networks that
+        # block public DNS. Change it if your upstream gateway differs.
+        local: 'udp://192.168.100.1:53' -> direct
+        # DoH through the proxy avoids the blocked port-53 path and returns
+        # unpolluted answers for blocked domains.
+        remote: 'https://1.1.1.1/dns-query' -> proxy
     }
     routing {
         request {
             qtype(https) -> reject
-            qname(geosite: gfw) -> remote
+            qname(geosite: gfw, geosite: geolocation-!cn, geosite: google) -> remote
+            qname(geosite: cn, geosite: private, geosite: category-games) -> local
             fallback: local
         }
         response {
-            upstream(remote) -> accept
-            qname(geosite: private) -> accept
-            ip(geoip: cn) -> accept
-            fallback: remote
+            upstream(remote) && ip(geoip: cn) -> local
+            fallback: accept
         }
     }
 }

@@ -75,6 +75,9 @@ define Package/honk/install
 	$(INSTALL_CONF) $(CURDIR)/files/config.dae $(1)/etc/honk/config.dae
 	$(INSTALL_CONF) $(CURDIR)/files/config.d/*.dae $(1)/etc/honk/config.d/
 
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) $(CURDIR)/files/uci-defaults/90-honk-dnsmasq $(1)/etc/uci-defaults/90-honk-dnsmasq
+
 	$(INSTALL_DIR) $(1)/usr/share/licenses/honk
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/LICENSE $(1)/usr/share/licenses/honk/LICENSE
 endef

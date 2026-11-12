@@ -285,7 +285,10 @@ jobs:
       - name: Compile firmware
         run: |
           set -euo pipefail
-          make -j"$(nproc)"
+          # OpenWrt's recursive make holds a jobserver token per nesting level,
+          # so nproc alone leaves the leaves underutilized; a couple extra slots
+          # compensate. The runner has 4 vCPUs / 16G, so -j6 is still safe.
+          make -j$(( $(nproc) + 2 ))
 
       - name: Show ccache stats
         if: always()

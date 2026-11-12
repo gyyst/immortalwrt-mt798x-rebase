@@ -130,27 +130,37 @@ jobs:
       # fresh cross toolchain, so that check would invalidate the whole cache.
       # Pin it to a fingerprint of the toolchain sources instead.
       CCACHE_COMPILERCHECK: string:openwrt-${{ needs.prepare.outputs.toolchain_hash }}
+      # Fresh checkouts give every source file a new mtime, and some packages
+      # embed __DATE__/__TIME__. Ignoring both keeps direct-mode hits.
+      CCACHE_SLOPPINESS: file_macro,time_macros,include_file_mtime,include_file_ctime
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Free up disk space
+      - name: Check disk space
         run: |
           set -euo pipefail
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup \
-            /opt/az /usr/local/share/powershell /usr/share/swift || true
-          sudo docker image prune -af || true
-          df -h
+          # The runner root filesystem has ~145G; the image ships with enough
+          # slack that deleting preinstalled SDKs (a 1.5-8 minute step in the
+          # old workflow) is unnecessary. Fail early if that ever changes.
+          avail_gib="$(df -BG --output=avail / | tail -n1 | tr -dc '0-9')"
+          echo "Free disk: ${avail_gib}G"
+          if [ "${avail_gib}" -lt 40 ]; then
+            echo "::error::Only ${avail_gib}G free, need at least 40G"
+            exit 1
+          fi
 
       - name: Install build dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
-          sudo -E apt-get -qq update
+          # Bound each mirror request so a stalled mirror cannot burn 15
+          # minutes the way an un-timed-out `apt-get update` can.
+          sudo -E apt-get -qq -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo -E apt-get -qq install -y --no-install-recommends \
             build-essential clang flex bison gawk g++ gcc-multilib g++-multilib \
             gettext git libncurses-dev libssl-dev rsync unzip zlib1g-dev file wget \
@@ -167,6 +177,7 @@ jobs:
         run: echo "week=$(date -u +%G-W%V)" >> "${GITHUB_OUTPUT}"
 
       - name: Restore download cache
+        id: cache_dl
         continue-on-error: true
         uses: actions/cache/restore@v4
         with:
@@ -177,6 +188,7 @@ jobs:
             dl-
 
       - name: Restore ccache
+        id: cache_ccache
         continue-on-error: true
         uses: actions/cache/restore@v4
         with:
@@ -187,6 +199,7 @@ jobs:
             ccache-
 
       - name: Restore toolchain cache
+        id: cache_toolchain
         continue-on-error: true
         uses: actions/cache/restore@v4
         with:
@@ -200,6 +213,7 @@ jobs:
             toolchain-
 
       - name: Restore feeds cache
+        id: cache_feeds
         continue-on-error: true
         uses: actions/cache/restore@v4
         with:
@@ -215,7 +229,7 @@ jobs:
           ./scripts/feeds install -a
 
       - name: Save feeds cache
-        if: matrix.defconfig == needs.prepare.outputs.cache_saver
+        if: matrix.defconfig == needs.prepare.outputs.cache_saver && steps.cache_feeds.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
@@ -250,17 +264,40 @@ jobs:
           }
 
       - name: Save download cache
-        if: matrix.defconfig == needs.prepare.outputs.cache_saver
+        if: matrix.defconfig == needs.prepare.outputs.cache_saver && steps.cache_dl.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: dl
           key: dl-${{ hashFiles('feeds.conf.default') }}-${{ steps.dlweek.outputs.week }}
 
+      - name: Reset ccache stats
+        run: |
+          set -euo pipefail
+          ccache_bin="$PWD/staging_dir/host/bin/ccache"
+          if [ ! -x "${ccache_bin}" ]; then
+            ccache_bin="$(command -v ccache || true)"
+          fi
+          if [ -n "${ccache_bin}" ]; then
+            CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache" "${ccache_bin}" --zero-stats || true
+          fi
+
       - name: Compile firmware
         run: |
           set -euo pipefail
           make -j"$(nproc)"
+
+      - name: Show ccache stats
+        if: always()
+        run: |
+          set -euo pipefail
+          ccache_bin="$PWD/staging_dir/host/bin/ccache"
+          if [ ! -x "${ccache_bin}" ]; then
+            ccache_bin="$(command -v ccache || true)"
+          fi
+          if [ -n "${ccache_bin}" ]; then
+            CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache" "${ccache_bin}" --show-stats || true
+          fi
 
       - name: Collect firmware files
         env:
@@ -292,6 +329,8 @@ jobs:
         with:
           name: firmware-${{ matrix.defconfig }}
           path: firmware-${{ matrix.defconfig }}.tar.gz
+          # The archive is already gzip-compressed; skip another zip pass.
+          compression-level: 0
           retention-days: 30
           if-no-files-found: error
 
@@ -308,7 +347,9 @@ jobs:
           if-no-files-found: ignore
 
       - name: Save toolchain cache
-        if: always() && matrix.defconfig == needs.prepare.outputs.cache_saver
+        # The key is deterministic, so once it exists saving is a no-op that
+        # still spends a minute archiving several GB. Skip it on an exact hit.
+        if: always() && matrix.defconfig == needs.prepare.outputs.cache_saver && steps.cache_toolchain.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:

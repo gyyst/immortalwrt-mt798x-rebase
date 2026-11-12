@@ -37,7 +37,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: 25.12
-          fetch-depth: 0
+          # Only the working tree is needed: the script edits one file, then
+          # commits and force-pushes a branch. A full clone just wastes time.
+          fetch-depth: 1
 
       - name: Update package/honk/Makefile
         id: update
